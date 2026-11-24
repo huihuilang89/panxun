@@ -1,0 +1,33 @@
+:root{--bg:#141414;--surface:#1F1E1C;--surface2:#2C2A27;--line:#37342F;--text:#F1EDE6;--muted:#A59E92;--up:#5BC49A;--down:#E7776B;--accent:#D8B26E;--warnBg:rgba(242,153,74,.16);--warnText:#F6B073;color-scheme:dark}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 Inter,"Noto Sans TC",system-ui,sans-serif;-webkit-text-size-adjust:100%}
+#app{max-width:520px;margin:0 auto;min-height:100vh;padding:calc(12px + env(safe-area-inset-top,0px)) 16px calc(84px + env(safe-area-inset-bottom,0px))}
+h1,h2,h3{margin:0;font-weight:600}
+.muted{color:var(--muted)}.up{color:var(--up)}.down{color:var(--down)}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:16px;margin:12px 0}
+.warn{background:var(--warnBg);color:var(--warnText);border-radius:12px;padding:10px 12px;font-size:13px;margin:12px 0}
+.clock{display:flex;justify-content:space-between;gap:12px;font-size:13px;color:var(--muted)}
+.clock b{display:block;color:var(--text);font-size:16px;font-variant-numeric:tabular-nums}
+.badge{display:inline-block;padding:2px 8px;border-radius:99px;font-size:12px;border:1px solid var(--line);color:var(--muted)}
+.badge.open{color:var(--up);border-color:var(--up)}
+.tiles{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.tile{background:var(--surface2);border-radius:12px;padding:10px 12px}
+.tile small{color:var(--muted)}.tile div{font-size:17px;font-variant-numeric:tabular-nums}
+.row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:12px 0;border-top:1px solid var(--line)}
+.row:first-child{border-top:0}
+.sym{font-weight:600;font-size:16px}
+input,button{font:inherit}
+input{width:100%;background:var(--surface2);border:1px solid var(--line);border-radius:10px;color:var(--text);padding:11px 12px;margin:6px 0}
+input:focus{outline:1px solid var(--accent)}
+label{font-size:13px;color:var(--muted)}
+.btn{background:var(--accent);color:#1a1509;border:0;border-radius:10px;padding:11px 16px;font-weight:600;width:100%;margin-top:8px;cursor:pointer}
+.btn.ghost{background:transparent;color:var(--muted);border:1px solid var(--line)}
+.btn.small{width:auto;padding:6px 12px;margin:0;font-size:13px}
+.err{color:var(--down);font-size:13px;min-height:18px;margin-top:6px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.login{padding-top:12vh}.login h1{font-size:26px;color:var(--accent);margin-bottom:4px}
+nav{position:fixed;left:0;right:0;bottom:0;background:var(--surface);border-top:1px solid var(--line);display:flex;justify-content:center;padding-bottom:env(safe-area-inset-bottom,0px)}
+nav div{display:flex;max-width:520px;width:100%}
+nav button{flex:1;background:none;border:0;color:var(--muted);padding:12px 0;font-size:13px;cursor:pointer}
+nav button.on{color:var(--accent);font-weight:600}
+.soon{text-align:center;padding:48px 8px;color:var(--muted)}
