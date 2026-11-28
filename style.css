@@ -31,3 +31,5 @@ nav div{display:flex;max-width:520px;width:100%}
 nav button{flex:1;background:none;border:0;color:var(--muted);padding:12px 0;font-size:13px;cursor:pointer}
 nav button.on{color:var(--accent);font-weight:600}
 .soon{text-align:center;padding:48px 8px;color:var(--muted)}
+.btn.small{white-space:nowrap;flex:none}
+.row>div:first-child{min-width:0;flex:1}
