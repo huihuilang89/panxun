@@ -158,6 +158,13 @@
       return r.json();
     }).then(function (j) { if (!j || !(j.c > 0)) throw new Error("empty"); return j; });
   }
+  // 沒有即時報價時，退而使用 K 線資料的最近收盤價
+  function qget(sym) {
+    var c = state.quotes[sym]; if (c && c.c) return c;
+    var s = state.series[sym];
+    if (s && s.length > 1) { var l = s[s.length - 1], p = s[s.length - 2]; return { c: l.c, dp: (l.c - p.c) / p.c * 100, fb: true }; }
+    return null;
+  }
   function money(x) { return (x < 0 ? "-" : "") + "$" + Math.abs(x).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
   function pct(x) { return (x >= 0 ? "+" : "") + x.toFixed(2) + "%"; }
   function cls(x) { return x > 0 ? "up" : x < 0 ? "down" : "muted"; }
@@ -196,7 +203,7 @@
       list.textContent = "";
       if (!state.holdings.length) list.append(el("p", { class: "muted" }, "還沒有持倉，下方新增第一筆。"));
       state.holdings.forEach(function (h) {
-        var cur = q[h.symbol], right = [];
+        var cur = qget(h.symbol), right = [];
         var cost = h.shares * h.cost; tc += cost;
         if (cur && cur.c) {
           var val = h.shares * cur.c; tv += val; ok++;
@@ -226,7 +233,7 @@
       var cv = curve(state.holdings, state.series);
       if (cv.pts.length > 1) sumBox.append(el("div", { class: "chart", style: "margin-top:10px" }, [lineSvg(cv.pts, 340, 80), el("small", { class: "muted" }, "持倉市值曲線（自買入日起，收盤價估算）")]));
       tileEls.forEach(function (t) {
-        var c = q[t.sym]; t.v.textContent = "";
+        var c = qget(t.sym); t.v.textContent = "";
         if (c && c.c) { t.v.className = ""; t.v.append(money(c.c) + " ", el("span", { class: cls(c.dp), style: "font-size:13px" }, pct(c.dp || 0))); }
         else { t.v.className = "muted"; t.v.textContent = "—"; }
       });
