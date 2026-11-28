@@ -2,7 +2,7 @@
   "use strict";
   var C = window.APP_CONFIG;
   var app = document.getElementById("app");
-  var db = null, state = { tab: "home", profile: null, email: "", holdings: [], showKey: false, quotes: {} };
+  var db = null, state = { tab: "home", profile: null, email: "", holdings: [], showKey: false, quotes: {}, series: {}, tdBusy: false, detail: "" };
   var timer = null, qtimer = null;
 
   function el(tag, props, kids) {
@@ -97,6 +97,57 @@
   // ---------- 行情 Key（只存在本機瀏覽器） ----------
   function getKey() { try { return localStorage.getItem("fh_key") || ""; } catch (e) { return ""; } }
   function setKey(v) { try { if (v) localStorage.setItem("fh_key", v); else localStorage.removeItem("fh_key"); } catch (e) {} }
+
+  // ---------- Twelve Data（K 線）Key 與資料 ----------
+  function getTd() { try { return localStorage.getItem("td_key") || ""; } catch (e) { return ""; } }
+  function setTd(v) { try { if (v) localStorage.setItem("td_key", v); else localStorage.removeItem("td_key"); } catch (e) {} }
+  function cacheGet(sym) { try { var o = JSON.parse(localStorage.getItem("td_" + sym) || "null"); if (o && Date.now() - o.t < 6 * 3600 * 1000) return o.v; } catch (e) {} return null; }
+  function cachePut(sym, v) { try { localStorage.setItem("td_" + sym, JSON.stringify({ t: Date.now(), v: v })); } catch (e) {} }
+  function fetchSeries(sym, key) {
+    var url = "https://api.twelvedata.com/time_series?symbol=" + encodeURIComponent(sym) + "&interval=1day&outputsize=250&apikey=" + encodeURIComponent(key);
+    return fetch(url).then(function (r) { return r.json(); }).then(function (j) {
+      if (!j || j.status === "error" || !j.values) { var e = new Error((j && j.message) || "empty"); e.code = j && j.code; throw e; }
+      return j.values.slice().reverse().map(function (x) { return { d: x.datetime, o: +x.open, h: +x.high, l: +x.low, c: +x.close, v: +x.volume }; });
+    });
+  }
+  var NS = "http://www.w3.org/2000/svg";
+  function svg(tag, attrs, parent) { var n = document.createElementNS(NS, tag); Object.keys(attrs).forEach(function (k) { n.setAttribute(k, attrs[k]); }); if (parent) parent.appendChild(n); return n; }
+  function candleSvg(vals, w, h) {
+    var root = svg("svg", { viewBox: "0 0 " + w + " " + h, width: "100%", height: h, preserveAspectRatio: "none" });
+    if (!vals.length) return root;
+    var hi = Math.max.apply(null, vals.map(function (x) { return x.h; })), lo = Math.min.apply(null, vals.map(function (x) { return x.l; }));
+    var rng = hi - lo || 1, step = w / vals.length, bw = Math.max(1, step * 0.6);
+    function y(p) { return 3 + (hi - p) / rng * (h - 6); }
+    vals.forEach(function (x, i) {
+      var cx = i * step + step / 2, up = x.c >= x.o, col = up ? "#5BC49A" : "#E7776B";
+      svg("line", { x1: cx, x2: cx, y1: y(x.h), y2: y(x.l), stroke: col, "stroke-width": 1 }, root);
+      svg("rect", { x: cx - bw / 2, width: bw, y: Math.min(y(x.o), y(x.c)), height: Math.max(1, Math.abs(y(x.o) - y(x.c))), fill: col }, root);
+    });
+    return root;
+  }
+  function lineSvg(pts, w, h) {
+    var root = svg("svg", { viewBox: "0 0 " + w + " " + h, width: "100%", height: h, preserveAspectRatio: "none" });
+    var hi = Math.max.apply(null, pts), lo = Math.min.apply(null, pts), rng = hi - lo || 1;
+    var d = pts.map(function (p, i) { return (i ? "L" : "M") + (i / (pts.length - 1) * w).toFixed(1) + " " + (3 + (hi - p) / rng * (h - 6)).toFixed(1); }).join(" ");
+    svg("path", { d: d, fill: "none", stroke: "#D8B26E", "stroke-width": 2, "vector-effect": "non-scaling-stroke" }, root);
+    return root;
+  }
+  function curve(holdings, series) {
+    var dates = {}, i;
+    holdings.forEach(function (h) { (series[h.symbol] || []).forEach(function (x) { dates[x.d.slice(0, 10)] = 1; }); });
+    var ds = Object.keys(dates).sort(), out = [], labels = [];
+    ds.forEach(function (d) {
+      var tot = 0, n = 0, ok = true;
+      holdings.forEach(function (h) {
+        if (h.buy_date > d) return;
+        var s = series[h.symbol], c = null;
+        if (s) for (i = 0; i < s.length; i++) if (s[i].d.slice(0, 10) === d) { c = s[i].c; break; }
+        if (c === null) ok = false; else { tot += h.shares * c; n++; }
+      });
+      if (ok && n > 0) { out.push(tot); labels.push(d); }
+    });
+    return { pts: out, labels: labels };
+  }
   var TILES = [["道瓊斯", "DIA", "ETF 代理"], ["標普 500", "SPY", "ETF 代理"], ["納斯達克 100", "QQQ", "ETF 代理"], ["波動率", "VIXY", "VIX 期貨 ETF"]];
   function fetchQuote(sym, key) {
     var url = "https://finnhub.io/api/v1/quote?symbol=" + encodeURIComponent(sym) + "&token=" + encodeURIComponent(key);
@@ -129,10 +180,13 @@
     var status = el("div", { class: "muted", style: "font-size:12px;margin-top:8px" });
     var tileEls = TILES.map(function (t) {
       var v = el("div", { class: "muted" }, "—");
-      return { sym: t[1], v: v, box: el("div", { class: "tile" }, [el("small", {}, t[0] + "（" + t[1] + "）"), v, el("small", {}, t[2])]) };
+      return { sym: t[1], v: v, box: el("div", { class: "tile", style: "cursor:pointer", onclick: function () { state.detail = state.detail === t[1] ? "" : t[1]; drawDetail(); } }, [el("small", {}, t[0] + "（" + t[1] + "）"), v, el("small", {}, t[2])]) };
     });
     main.append(sumBox);
-    main.append(el("div", { class: "card" }, [el("div", { class: "tiles" }, tileEls.map(function (t) { return t.box; })), status]));
+    var tdStatus = el("div", { class: "muted", style: "font-size:12px;margin-top:4px" });
+    var detail = el("div", { class: "card" }); detail.hidden = true;
+    main.append(el("div", { class: "card" }, [el("div", { class: "tiles" }, tileEls.map(function (t) { return t.box; })), status, tdStatus]));
+    main.append(detail);
 
     var list = el("div", {});
     main.append(el("div", { class: "card" }, [el("h3", {}, "我的持倉"), list]));
@@ -150,11 +204,14 @@
           right.push(el("div", { class: "sym" }, money(cur.c)));
           right.push(el("div", { class: cls(pl), style: "font-size:12px" }, money(pl) + "（" + pct(plp) + "）"));
         } else right.push(el("div", { class: "muted" }, "—"));
-        list.append(el("div", { class: "row" }, [
+        var rowEl = el("div", { class: "row" }, [
           el("div", {}, [el("div", { class: "sym" }, h.symbol), el("div", { class: "muted", style: "font-size:12px" }, h.shares + " 股 · 成本 " + h.cost + " · " + h.buy_date)]),
           el("div", { style: "text-align:right" }, right),
           el("button", { class: "btn ghost small", onclick: function () { del(h.id); } }, "刪除")
-        ]));
+        ]);
+        var sr = state.series[h.symbol];
+        if (sr && sr.length) rowEl.append(el("div", { class: "chart" }, [candleSvg(sr.slice(-60), 340, 70), el("small", { class: "muted" }, "近 60 個交易日日 K")]));
+        list.append(rowEl);
       });
       sumBox.textContent = "";
       if (state.holdings.length && ok === state.holdings.length) {
@@ -166,6 +223,8 @@
         sumBox.append(el("div", { class: "muted", style: "font-size:13px" }, "持倉總市值"), el("div", { style: "font-size:26px" }, "—"),
           el("div", { class: "muted", style: "font-size:12px" }, state.holdings.length ? "部分或全部報價尚未取得" : "新增持倉後顯示"));
       }
+      var cv = curve(state.holdings, state.series);
+      if (cv.pts.length > 1) sumBox.append(el("div", { class: "chart", style: "margin-top:10px" }, [lineSvg(cv.pts, 340, 80), el("small", { class: "muted" }, "持倉市值曲線（自買入日起，收盤價估算）")]));
       tileEls.forEach(function (t) {
         var c = q[t.sym]; t.v.textContent = "";
         if (c && c.c) { t.v.className = ""; t.v.append(money(c.c) + " ", el("span", { class: cls(c.dp), style: "font-size:13px" }, pct(c.dp || 0))); }
@@ -187,8 +246,40 @@
         draw();
       });
     }
+    function drawDetail() {
+      detail.textContent = "";
+      var s = state.series[state.detail];
+      if (!state.detail) { detail.hidden = true; return; }
+      detail.hidden = false;
+      var t = TILES.filter(function (x) { return x[1] === state.detail; })[0];
+      detail.append(el("h3", {}, t[0] + "（" + t[1] + "）"));
+      if (s && s.length) {
+        var last = s[s.length - 1], r = s.slice(-60), vmax = Math.max.apply(null, r.map(function (x) { return x.v; }));
+        detail.append(candleSvg(r, 340, 140), el("small", { class: "muted" }, "近 60 個交易日日 K · 最新收盤 " + money(last.c) + " · 區間高 " + money(Math.max.apply(null, r.map(function (x) { return x.h; }))) + " 低 " + money(Math.min.apply(null, r.map(function (x) { return x.l; })))));
+      } else detail.append(el("p", { class: "muted" }, "尚無 K 線資料，請先在「我的」頁設定 Twelve Data Key。"));
+      detail.append(el("p", { class: "muted", style: "font-size:12px" }, "此為 ETF 代理走勢，並非指數點數本身。"));
+    }
+    function loadSeries() {
+      var key = getTd();
+      if (!key) { tdStatus.textContent = state.showKey ? "尚未設定 Twelve Data Key（K 線）：到「我的」頁貼上。" : "尚未設定 K 線 Key，請聯絡管理員。"; return; }
+      if (state.tdBusy) return;
+      var syms = {}; state.holdings.forEach(function (h) { syms[h.symbol] = 1; }); ["SPY", "DIA", "QQQ"].forEach(function (x) { syms[x] = 1; });
+      var todo = [];
+      Object.keys(syms).forEach(function (x) { var c = cacheGet(x); if (c) state.series[x] = c; else if (!state.series[x]) todo.push(x); });
+      draw(); drawDetail();
+      if (!todo.length) { tdStatus.textContent = "K 線資料已載入（每檔每 6 小時更新一次）"; return; }
+      state.tdBusy = true; var fails = 0, errMsg = "";
+      (function next(i) {
+        if (!document.body.contains(sumBox)) { state.tdBusy = false; return; }
+        if (i >= todo.length) { state.tdBusy = false; tdStatus.textContent = fails ? ("有 " + fails + " 檔 K 線沒取得：" + errMsg) : "K 線資料已載入"; return; }
+        tdStatus.textContent = "載入 K 線 " + (i + 1) + "/" + todo.length + "（免費版每分鐘限 8 次，會慢一點）";
+        fetchSeries(todo[i], key).then(function (v) { state.series[todo[i]] = v; cachePut(todo[i], v); draw(); drawDetail(); })
+          .catch(function (e) { fails++; errMsg = e.code === 401 || e.code === 403 ? "Key 無效或無權限" : e.code === 429 ? "額度用完，稍後再試" : (e.message || "連線失敗").slice(0, 80); if (e.code === 429) { todo.length = i + 1; } })
+          .then(function () { setTimeout(function () { next(i + 1); }, 8000); });
+      })(0);
+    }
     function load() {
-      db.from("holdings").select("*").order("created_at", { ascending: false }).then(function (r) { state.holdings = r.data || []; draw(); refresh(); });
+      db.from("holdings").select("*").order("created_at", { ascending: false }).then(function (r) { state.holdings = r.data || []; draw(); refresh(); loadSeries(); });
     }
     function del(id) { db.from("holdings").delete().eq("id", id).then(load); }
     qtimer = setInterval(function () { if (!document.hidden) refresh(); }, 60000);
@@ -231,6 +322,16 @@
         el("button", { class: "btn", onclick: function () { var v = ki.value.trim(); if (v) { setKey(v); ki.value = ""; state.quotes = {}; msg.textContent = "已儲存"; } } }, "儲存 Key"),
         el("button", { class: "btn ghost", onclick: function () { setKey(""); state.quotes = {}; msg.textContent = "已清除"; } }, "清除 Key"),
         msg
+      ]));
+      var ti = el("input", { type: "password", placeholder: "貼上你的 Twelve Data API Key", autocomplete: "off" });
+      var tmsg = el("div", { class: "muted", style: "font-size:12px;margin-top:6px" }, getTd() ? "已設定（只存在這台裝置的瀏覽器，不會上傳）" : "尚未設定");
+      main.append(el("div", { class: "card" }, [
+        el("h3", {}, "K 線 Key 設定（Twelve Data）"),
+        el("p", { class: "muted", style: "font-size:13px" }, "到 twelvedata.com 免費註冊，取得你自己的 API Key 後貼在這裡，用來顯示 K 線和持倉曲線。這是跟上面行情 Key 不同的另一把 Key。"),
+        ti,
+        el("button", { class: "btn", onclick: function () { var v = ti.value.trim(); if (v) { setTd(v); ti.value = ""; state.series = {}; tmsg.textContent = "已儲存"; } } }, "儲存 Key"),
+        el("button", { class: "btn ghost", onclick: function () { setTd(""); state.series = {}; tmsg.textContent = "已清除"; } }, "清除 Key"),
+        tmsg
       ]));
     }
   }

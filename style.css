@@ -33,3 +33,7 @@ nav button.on{color:var(--accent);font-weight:600}
 .soon{text-align:center;padding:48px 8px;color:var(--muted)}
 .btn.small{white-space:nowrap;flex:none}
 .row>div:first-child{min-width:0;flex:1}
+.row{flex-wrap:wrap}
+.row .chart{flex-basis:100%;width:100%}
+.chart svg,.card>svg{display:block;width:100%}
+.tile:active{background:var(--line)}
