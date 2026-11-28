@@ -162,9 +162,18 @@
   function qget(sym) {
     var c = state.quotes[sym]; if (c && c.c) return c;
     var s = state.series[sym];
-    if (s && s.length > 1) { var l = s[s.length - 1], p = s[s.length - 2]; return { c: l.c, dp: (l.c - p.c) / p.c * 100, fb: true }; }
+    if (s && s.length > 1) { var l = s[s.length - 1], p = s[s.length - 2]; return { c: l.c, dp: (l.c - p.c) / p.c * 100, fb: true, d: l.d.slice(0, 10) }; }
     return null;
   }
+  function etStamp(sec) {
+    if (!sec) return "時間不明";
+    var p = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour12: false, month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).formatToParts(new Date(sec * 1000)), g = {};
+    p.forEach(function (x) { g[x.type] = x.value; });
+    return g.month + "/" + g.day + " " + (g.hour === "24" ? "00" : g.hour) + ":" + g.minute;
+  }
+  // 資料來源標示：避免把收盤價或延遲報價誤認為即時盤中資料
+  function srcShort(c) { return c.fb ? "收盤價 " + c.d.slice(5).replace("-", "/") + "（非盤中）" : "報價 " + etStamp(c.t) + " ET（可能延遲）"; }
+  function srcLong(c) { return c.fb ? srcShort(c) + " · 漲跌＝該日收盤對前一交易日收盤，非盤中漲跌" : srcShort(c) + " · 漲跌＝相對前一收盤"; }
   function money(x) { return (x < 0 ? "-" : "") + "$" + Math.abs(x).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
   function pct(x) { return (x >= 0 ? "+" : "") + x.toFixed(2) + "%"; }
   function cls(x) { return x > 0 ? "up" : x < 0 ? "down" : "muted"; }
@@ -186,8 +195,8 @@
     var sumBox = el("div", { class: "card" });
     var status = el("div", { class: "muted", style: "font-size:12px;margin-top:8px" });
     var tileEls = TILES.map(function (t) {
-      var v = el("div", { class: "muted" }, "—");
-      return { sym: t[1], v: v, box: el("div", { class: "tile", style: "cursor:pointer", onclick: function () { state.detail = state.detail === t[1] ? "" : t[1]; drawDetail(); } }, [el("small", {}, t[0] + "（" + t[1] + "）"), v, el("small", {}, t[2])]) };
+      var v = el("div", { class: "muted" }, "—"), tg = el("small", { style: "display:block;font-size:11px;margin-top:2px" });
+      return { sym: t[1], v: v, tg: tg, box: el("div", { class: "tile", style: "cursor:pointer", onclick: function () { state.detail = state.detail === t[1] ? "" : t[1]; drawDetail(); } }, [el("small", {}, t[0] + "（" + t[1] + "）"), v, el("small", {}, t[2]), tg]) };
     });
     main.append(sumBox);
     var tdStatus = el("div", { class: "muted", style: "font-size:12px;margin-top:4px" });
@@ -199,22 +208,23 @@
     main.append(el("div", { class: "card" }, [el("h3", {}, "我的持倉"), list]));
 
     function draw() {
-      var q = state.quotes, tv = 0, tc = 0, ok = 0;
+      var q = state.quotes, tv = 0, tc = 0, ok = 0, fbN = 0;
       list.textContent = "";
       if (!state.holdings.length) list.append(el("p", { class: "muted" }, "還沒有持倉，下方新增第一筆。"));
       state.holdings.forEach(function (h) {
         var cur = qget(h.symbol), right = [];
         var cost = h.shares * h.cost; tc += cost;
         if (cur && cur.c) {
-          var val = h.shares * cur.c; tv += val; ok++;
+          var val = h.shares * cur.c; tv += val; ok++; if (cur.fb) fbN++;
           var pl = val - cost, plp = cost > 0 ? pl / cost * 100 : 0;
           right.push(el("div", { class: "sym" }, money(cur.c)));
+          right.push(el("div", { class: "muted", style: "font-size:11px" }, srcShort(cur)));
           right.push(el("div", { class: cls(pl), style: "font-size:12px" }, money(pl) + "（" + pct(plp) + "）"));
         } else right.push(el("div", { class: "muted" }, "—"));
         var rowEl = el("div", { class: "row" }, [
           el("div", {}, [el("div", { class: "sym" }, h.symbol), el("div", { class: "muted", style: "font-size:12px" }, h.shares + " 股 · 成本 " + h.cost + " · " + h.buy_date)]),
           el("div", { style: "text-align:right" }, right),
-          el("button", { class: "btn ghost small", onclick: function () { del(h.id); } }, "刪除")
+          el("div", { style: "display:flex;gap:6px;flex:none" }, [el("button", { class: "btn ghost small", onclick: function () { startEdit(h); } }, "編輯"), el("button", { class: "btn ghost small", onclick: function () { del(h.id); } }, "刪除")])
         ]);
         var sr = state.series[h.symbol];
         if (sr && sr.length) rowEl.append(el("div", { class: "chart" }, [candleSvg(sr.slice(-60), 340, 70), el("small", { class: "muted" }, "近 60 個交易日日 K")]));
@@ -223,7 +233,7 @@
       sumBox.textContent = "";
       if (state.holdings.length && ok === state.holdings.length) {
         var pl2 = tv - tc;
-        sumBox.append(el("div", { class: "muted", style: "font-size:13px" }, "持倉總市值（延遲報價）"),
+        sumBox.append(el("div", { class: "muted", style: "font-size:13px" }, "持倉總市值（" + (fbN === ok ? "全部為收盤價，非盤中" : fbN ? "部分為收盤價，其餘為可能延遲的報價" : "報價可能延遲，非即時") + "）"),
           el("div", { style: "font-size:26px;font-weight:600;font-variant-numeric:tabular-nums" }, money(tv)),
           el("div", { class: cls(pl2) }, "總損益 " + money(pl2) + "（" + pct(tc > 0 ? pl2 / tc * 100 : 0) + "）"));
       } else {
@@ -233,7 +243,7 @@
       var cv = curve(state.holdings, state.series);
       if (cv.pts.length > 1) sumBox.append(el("div", { class: "chart", style: "margin-top:10px" }, [lineSvg(cv.pts, 340, 80), el("small", { class: "muted" }, "持倉市值曲線（自買入日起，收盤價估算）")]));
       tileEls.forEach(function (t) {
-        var c = qget(t.sym); t.v.textContent = "";
+        var c = qget(t.sym); t.v.textContent = ""; t.tg.textContent = c ? srcLong(c) : ""; t.tg.className = "muted";
         if (c && c.c) { t.v.className = ""; t.v.append(money(c.c) + " ", el("span", { class: cls(c.dp), style: "font-size:13px" }, pct(c.dp || 0))); }
         else { t.v.className = "muted"; t.v.textContent = "—"; }
       });
@@ -295,18 +305,30 @@
     var sh = el("input", { type: "number", step: "any", placeholder: "股數", inputmode: "decimal" });
     var co = el("input", { type: "number", step: "any", placeholder: "每股成本（美元）", inputmode: "decimal" });
     var bd = el("input", { type: "date" });
+    var editId = null;
+    var formTitle = el("h3", {}, "新增持倉");
+    var cancel = el("button", { class: "btn ghost", onclick: function () { resetForm(); } }, "取消修改"); cancel.hidden = true;
+    function resetForm() { editId = null; sy.value = sh.value = co.value = bd.value = ""; formTitle.textContent = "新增持倉"; add.textContent = "新增持倉"; cancel.hidden = true; err.textContent = ""; }
+    function startEdit(h) {
+      editId = h.id; sy.value = h.symbol; sh.value = h.shares; co.value = h.cost; bd.value = h.buy_date;
+      formTitle.textContent = "修改持倉"; add.textContent = "儲存修改"; cancel.hidden = false; err.textContent = "";
+      formCard.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
     var err = el("div", { class: "err" });
     var add = el("button", { class: "btn", onclick: function () {
       err.textContent = "";
       var s = sy.value.trim().toUpperCase();
       if (!/^[A-Z][A-Z0-9.-]{0,9}$/.test(s)) { err.textContent = "股票代碼格式不正確"; return; }
       if (!(parseFloat(sh.value) > 0) || !(parseFloat(co.value) >= 0) || !bd.value) { err.textContent = "請填寫股數、成本和買入日期"; return; }
-      db.from("holdings").insert({ symbol: s, shares: parseFloat(sh.value), cost: parseFloat(co.value), buy_date: bd.value }).then(function (r) {
-        if (r.error) { err.textContent = "新增失敗，請稍後再試"; return; }
-        sy.value = sh.value = co.value = bd.value = ""; load();
+      var rec = { symbol: s, shares: parseFloat(sh.value), cost: parseFloat(co.value), buy_date: bd.value };
+      var op = editId ? db.from("holdings").update(rec).eq("id", editId) : db.from("holdings").insert(rec);
+      op.then(function (r) {
+        if (r.error) { err.textContent = (editId ? "修改" : "新增") + "失敗，請稍後再試"; return; }
+        resetForm(); load();
       });
     } }, "新增持倉");
-    main.append(el("div", { class: "card" }, [el("h3", {}, "新增持倉"), sy, el("div", { class: "grid2" }, [sh, co]), el("label", {}, "買入日期"), bd, err, add]));
+    var formCard = el("div", { class: "card" }, [formTitle, sy, el("div", { class: "grid2" }, [sh, co]), el("label", {}, "買入日期"), bd, err, add, cancel]);
+    main.append(formCard);
     draw(); load();
   }
 
